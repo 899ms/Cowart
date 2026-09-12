@@ -37,6 +37,10 @@ import {
   COWART_GA4_EVENT_NAMES,
   sendCowartGa4Event,
 } from "./lib/ga4-analytics.mjs";
+import {
+  COWART_POSTHOG_HOST,
+  sendCowartPosthogEvent,
+} from "./lib/posthog-analytics.mjs";
 
 const TOOL_RENDER_WIDGET = "render_cowart_canvas_widget";
 const TOOL_GET_CANVAS_STATE = "get_cowart_canvas_state";
@@ -83,11 +87,20 @@ const COWART_GOOGLE_DOMAINS = [
   "https://*.googleapis.com",
   "https://*.merchant-center-analytics.goog",
 ];
-const COWART_CONNECT_DOMAINS = [...COWART_GOOGLE_DOMAINS];
+const COWART_POSTHOG_DOMAINS = [
+  COWART_POSTHOG_HOST,
+  "https://us.posthog.com",
+  "https://*.posthog.com",
+];
+const COWART_CONNECT_DOMAINS = [
+  ...COWART_GOOGLE_DOMAINS,
+  ...COWART_POSTHOG_DOMAINS,
+];
 const COWART_RESOURCE_DOMAINS = [
   "data:",
   "blob:",
   ...COWART_GOOGLE_DOMAINS,
+  ...COWART_POSTHOG_DOMAINS,
 ];
 const COWART_FRAME_DOMAINS = [
   "data:",
@@ -1119,11 +1132,12 @@ function registerCowartAnalyticsTools(mcpServer) {
     {
       title: "Track Cowart analytics event",
       description:
-        "Use this when the Cowart widget records an anonymous product-usage event in Google Analytics.",
+        "Use this when the Cowart widget records an anonymous product-usage event in Google Analytics and PostHog.",
       inputSchema: {
         clientId: z.string().trim().min(1).max(128),
         eventName: z.enum(COWART_GA4_EVENT_NAMES),
         appVersion: z.string().trim().min(1).max(32),
+        eventId: z.string().trim().min(1).max(128).optional(),
         parameters: z.object({
           annotation_type: z.enum(["arrow"]).optional(),
           ai_type: z.enum(["image", "html", "slides"]).optional(),
@@ -1155,31 +1169,51 @@ function registerCowartAnalyticsTools(mcpServer) {
         "openai/widgetAccessible": true,
       },
     },
-    async ({ clientId, eventName, appVersion, parameters }) => {
-      try {
-        const result = await sendCowartGa4Event({
-          clientId,
-          eventName,
-          appVersion,
-          parameters,
-        });
-        return {
-          content: [],
-          structuredContent: result,
-        };
-      } catch (error) {
-        console.warn(`Cowart analytics delivery failed: ${error instanceof Error ? error.message : String(error)}`);
-        return {
-          content: [],
-          structuredContent: {
-            configured: true,
-            delivered: false,
-            status: null,
-          },
-        };
-      }
+    async ({ clientId, eventName, appVersion, eventId, parameters }) => {
+      // Each provider owns its delivery state so one failing endpoint cannot
+      // hold back the other, and the widget can retry only the missing one.
+      const [ga4, posthog] = await Promise.all([
+        analyticsDelivery("ga4", () =>
+          sendCowartGa4Event({
+            clientId,
+            eventName,
+            appVersion,
+            parameters,
+          })
+        ),
+        analyticsDelivery("posthog", () =>
+          sendCowartPosthogEvent({
+            clientId,
+            eventName,
+            appVersion,
+            eventId,
+            parameters,
+          })
+        ),
+      ]);
+      const configured = [ga4, posthog].filter((provider) => provider.configured);
+      return {
+        content: [],
+        structuredContent: {
+          delivered: configured.length > 0 && configured.every((provider) => provider.delivered),
+          configured: configured.length > 0,
+          status: ga4.status ?? posthog.status,
+          providers: { ga4, posthog },
+        },
+      };
     },
   );
+}
+
+async function analyticsDelivery(provider, send) {
+  try {
+    return await send();
+  } catch (error) {
+    console.warn(
+      `Cowart ${provider} analytics delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { configured: true, delivered: false, status: null };
+  }
 }
 
 function registerCowartStateTools(mcpServer) {

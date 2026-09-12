@@ -159,6 +159,15 @@ npm run build
 - `COWART_PROJECT_DIR`：画布数据所属的用户项目目录。
 - `COWART_CANVAS_DIR`：画布数据目录，默认是 `$COWART_PROJECT_DIR/canvas`。
 
+## 匿名使用统计
+
+Widget 会记录匿名产品事件（`canvas_opened`、`annotation_created`、`ai_generation_requested`、`widget_prompt_sent`），不包含 prompt、文件名或画布内容。
+
+- 主通道：`track_cowart_analytics_event` MCP 工具，服务端同时投递 GA4 Measurement Protocol 与 PostHog。
+- 兜底通道：仅在 MCP 通道不可用时，Widget 直接调用 GA4 gtag 与 PostHog capture；两边共用同一个事件 uuid，重试不会重复计数。
+- PostHog 项目 token（公开、只写）放在 `.codex-plugin/posthog.json`；本地覆盖用 `.codex-plugin/posthog.local.json` 或 `COWART_POSTHOG_PROJECT_TOKEN`。
+- PostHog 未配置 token 时投递自动跳过，不影响 Widget 运行。
+
 ## 开发者
 
 ZHONG XIN  

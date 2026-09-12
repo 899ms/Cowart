@@ -236,6 +236,11 @@ await new Promise((resolve) => setTimeout(resolve, 0))
 assert.equal(mcpCalls.length, 1)
 assert.equal(mcpCalls[0].name, 'track_cowart_analytics_event')
 assert.match(mcpCalls[0].arguments.clientId, /^123456789\.\d+$/)
+assert.match(
+  mcpCalls[0].arguments.eventId,
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  'Every tracked event needs a dedupe id shared with the PostHog fallback'
+)
 assert.equal(
   mcpStoredValues.get('cowart.analytics.client_id'),
   mcpCalls[0].arguments.clientId,
@@ -243,9 +248,11 @@ assert.equal(
 )
 assert.deepEqual({
   ...mcpCalls[0].arguments,
-  clientId: '<numeric-client-id>'
+  clientId: '<numeric-client-id>',
+  eventId: '<event-id>'
 }, {
   clientId: '<numeric-client-id>',
+  eventId: '<event-id>',
   eventName: 'ai_generation_requested',
   appVersion: 'test-version',
   parameters: {

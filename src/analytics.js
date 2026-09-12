@@ -1,4 +1,7 @@
 const DEFAULT_MEASUREMENT_ID = 'G-SJYHV19YZ9'
+// Public write-only PostHog project token for the Cowart widget property.
+const DEFAULT_POSTHOG_PROJECT_TOKEN = 'phc_wEcJJLKRLBQPdjitdRNqKEYwoCgVEEaj2rdcKjnGaWJv'
+const DEFAULT_POSTHOG_HOST = 'https://us.i.posthog.com'
 const DEFAULT_APP_VERSION =
   typeof __COWART_APP_VERSION__ !== 'undefined' ? __COWART_APP_VERSION__ : 'unknown'
 const GOOGLE_TAG_SCRIPT_ID = 'cowart-google-analytics'
@@ -8,6 +11,8 @@ const ANALYTICS_EVENT_TIMEOUT_MS = 1200
 const ANALYTICS_TOOL_NAME = 'track_cowart_analytics_event'
 const ANALYTICS_CLIENT_ID_STORAGE_KEY = 'cowart.analytics.client_id'
 const GA4_CLIENT_ID_PATTERN = /^\d+\.\d+$/
+const POSTHOG_CAPTURE_PATH = '/i/v0/e/'
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 const AI_TYPES = new Set(['image', 'html', 'slides'])
 const PROMPT_TYPES = new Set([
@@ -96,10 +101,34 @@ function analyticsToolResult(result) {
   return result?.structuredContent || result || {}
 }
 
+function newEventId(windowObject) {
+  try {
+    if (typeof windowObject?.crypto?.randomUUID === 'function') {
+      return windowObject.crypto.randomUUID()
+    }
+  } catch (_error) {
+    // Fall through to a math-random identifier; PostHog only needs uniqueness.
+  }
+  const random = () => Math.floor(Math.random() * 65_536).toString(16).padStart(4, '0')
+  const variant = ((Math.floor(Math.random() * 4) + 8).toString(16))
+  return `${random()}${random()}-${random()}-4${random().slice(1)}-${variant}${random().slice(1)}-${random()}${random()}${random()}`
+}
+
+function normalizedEventId(value) {
+  return typeof value === 'string' && UUID_PATTERN.test(value) ? value.toLowerCase() : undefined
+}
+
+function normalizedPostHogToken(value) {
+  const token = typeof value === 'string' ? value.trim() : ''
+  return /^phc_[A-Za-z0-9]{10,}$/.test(token) ? token : undefined
+}
+
 export function createCowartAnalytics({
   windowObject = globalThis.window,
   documentObject = globalThis.document,
   measurementId = DEFAULT_MEASUREMENT_ID,
+  posthogProjectToken = DEFAULT_POSTHOG_PROJECT_TOKEN,
+  posthogHost = DEFAULT_POSTHOG_HOST,
   appVersion = DEFAULT_APP_VERSION,
   debugMode = isDebugMode(windowObject),
   analyticsStorage = defaultAnalyticsStorage()
@@ -184,14 +213,55 @@ export function createCowartAnalytics({
     }
   }
 
+  function queuePostHogEvent(eventName, parameters = {}, { eventId } = {}) {
+    const token = normalizedPostHogToken(posthogProjectToken)
+    if (!token || typeof windowObject?.fetch !== 'function') return false
+
+    try {
+      clientId ||= anonymousClientId(windowObject)
+      windowObject.fetch(`${posthogHost}${POSTHOG_CAPTURE_PATH}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'omit',
+        keepalive: true,
+        body: JSON.stringify({
+          api_key: token,
+          event: eventName,
+          distinct_id: clientId,
+          uuid: normalizedEventId(eventId) || newEventId(windowObject),
+          timestamp: new Date().toISOString(),
+          properties: {
+            app_name: 'cowart',
+            app_version: appVersion,
+            app_surface: 'codex_widget',
+            source: analyticsSource(windowObject),
+            $lib: 'cowart-widget',
+            $process_person_profile: false,
+            ...parameters,
+            ...(debugMode ? { debug_mode: true } : {})
+          }
+        })
+      }).catch?.((error) => {
+        console.warn('Cowart PostHog event could not be delivered.', error)
+      })
+      return true
+    } catch (error) {
+      console.warn('Cowart PostHog event could not be queued.', error)
+      return false
+    }
+  }
+
   function trackEvent(
     eventName,
     parameters = {},
     { eventCallback, eventTimeout = ANALYTICS_EVENT_TIMEOUT_MS } = {}
   ) {
+    const eventId = newEventId(windowObject)
     const callAnalyticsTool = analyticsToolCaller(windowObject)
     if (!callAnalyticsTool) {
-      return queueGoogleTagEvent(eventName, parameters, { eventCallback, eventTimeout })
+      const ga4Queued = queueGoogleTagEvent(eventName, parameters, { eventCallback, eventTimeout })
+      queuePostHogEvent(eventName, parameters, { eventId })
+      return ga4Queued
     }
 
     clientId ||= anonymousClientId(windowObject)
@@ -199,17 +269,34 @@ export function createCowartAnalytics({
       clientId,
       eventName,
       appVersion,
+      eventId,
       parameters
     })).then((result) => {
       const delivery = analyticsToolResult(result)
-      if (delivery.delivered === true) {
+      const providers = delivery.providers
+      const ga4Delivered = providers
+        ? providers.ga4?.delivered === true
+        : delivery.delivered === true
+      // Older MCP servers without per-provider status keep the historical
+      // behaviour: the Google tag fallback covers everything PostHog misses.
+      const posthogDelivered = providers ? providers.posthog?.delivered === true : false
+
+      if (ga4Delivered && posthogDelivered) {
         eventCallback?.()
         return
       }
-      queueGoogleTagEvent(eventName, parameters, { eventCallback, eventTimeout })
+      if (ga4Delivered) {
+        eventCallback?.()
+      } else {
+        queueGoogleTagEvent(eventName, parameters, { eventCallback, eventTimeout })
+      }
+      if (!posthogDelivered) {
+        queuePostHogEvent(eventName, parameters, { eventId })
+      }
     }).catch((error) => {
-      console.warn('Cowart MCP analytics delivery failed; trying the Google tag fallback.', error)
+      console.warn('Cowart MCP analytics delivery failed; trying the browser fallbacks.', error)
       queueGoogleTagEvent(eventName, parameters, { eventCallback, eventTimeout })
+      queuePostHogEvent(eventName, parameters, { eventId })
     })
     return true
   }

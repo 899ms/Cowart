@@ -79,6 +79,12 @@ try {
   if (analyticsTool?.annotations?.openWorldHint !== true) {
     throw new Error("Cowart analytics tool should declare its external GA4 side effect.");
   }
+  if (!/PostHog/.test(analyticsTool?.description || "")) {
+    throw new Error("Cowart analytics tool should document dual GA4 and PostHog delivery.");
+  }
+  if (!Object.hasOwn(analyticsTool?.inputSchema?.properties || {}, "eventId")) {
+    throw new Error("Cowart analytics tool should accept a dedupe eventId shared with PostHog.");
+  }
   const clipboardTool = tools.tools.find((tool) => tool.name === "copy_cowart_image_to_clipboard");
   if (JSON.stringify(clipboardTool?._meta?.ui?.visibility) !== JSON.stringify(["app"])) {
     throw new Error("Cowart clipboard tool should only be visible to the widget app.");
