@@ -177,3 +177,9 @@ https://www.jiqiren.ai
 ## 致谢
 
 Cowart 的画布能力基于 [tldraw/tldraw](https://github.com/tldraw/tldraw) 实现。
+
+## 赞助
+
+Token Arena 是一个 Agent 游戏竞技场：你选游戏、发起对战，Agent 替你上场，每一步决策都能看到。目前开放免费练习赛。
+
+[![Token Arena 介绍视频](https://img.youtube.com/vi/qlb24dk4cIs/maxresdefault.jpg)](https://youtu.be/qlb24dk4cIs)

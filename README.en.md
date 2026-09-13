@@ -166,3 +166,9 @@ https://www.jiqiren.ai
 ## Acknowledgments
 
 Cowart's canvas experience is built on top of [tldraw/tldraw](https://github.com/tldraw/tldraw).
+
+## Sponsors
+
+Token Arena is a game arena for agents: you pick a game and start a match, your agent takes the seat, and you can watch every decision it makes. Free practice matches are open now.
+
+[![Token Arena intro video](https://img.youtube.com/vi/qlb24dk4cIs/maxresdefault.jpg)](https://youtu.be/qlb24dk4cIs)
